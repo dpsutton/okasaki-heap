@@ -39,6 +39,7 @@
 ;;       in merge (rev ts1, ts2) end
 
 (declare heap?)
+(declare node?)
 
 (defprotocol Nod
   (rank [_])
@@ -61,8 +62,6 @@
   (if (leq (cmp n1) (root n1) (root n2))
     (Node. (inc (rank n1)) (root n1) (app n2 (.-children n1)) (cmp n1))
     (Node. (inc (rank n1)) (root n2) (app n1 (.-children n2)) (cmp n1))))
-
-(defn node? [node] (instance? Node node))
 
 (s/def ::heap heap?)
 (s/def ::node node?)
@@ -130,7 +129,12 @@
   :ret heap?)
 
 (defn insert [x tree]
-  (insert-tree (Node. 0 x nil (get (meta tree) ::compare)) tree))
+  (let [cmp (get (meta tree) ::compare)]
+    (insert-tree (Node. 0 x (with-meta () {::compare compare}) cmp) tree)))
+
+(defn node? [node]
+  (and (instance? Node node)
+       (every? heap? (.-children node))))
 
 (defn heap? [x]
   (and (sequential? x)
@@ -152,7 +156,8 @@
   (heap? ^{::compare compare} ())
   (find-min
     (delete-min
-      (reduce (fn [tree x] (insert-tree (Node. 0 x nil compare) tree))
+      (reduce (fn [tree x] (insert-tree (Node. 0 x (with-meta () {::compare compare}) compare)
+                                        tree))
               (make-heap compare)
               (range 4))))
 
