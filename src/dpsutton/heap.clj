@@ -38,25 +38,35 @@
 ;;       val (Node (_, x, ts1), ts2) = getMin ts
 ;;       in merge (rev ts1, ts2) end
 
-(defprotocol Nod
+(defprotocol INode
   (rank [_])
   (element [_])
-  (cmp [_]))
+  (children [_])
+  (cmp [_])
+  (link [_ _]))
 
 (defn leq [cmp x y]
   (<= (cmp x y) 0))
 
-(deftype Node [rnk e children cmp]
-  Nod
+(defn- app [x y]
+  (with-meta (cons x y) (meta y)))
+
+(deftype Node [rnk e chdren cmp]
+  INode
   (rank [_] rnk)
   (element [_] e)
-  (cmp [_] cmp))
+  (children [_] chdren)
+  (cmp [_] cmp)
+  (link [n1 n2]
+    (if (leq cmp e (element n2))
+      (Node. (inc rnk) e            (app n2 chdren)        cmp)
+      (Node. (inc rnk) (element n2) (app n1 (children n2)) cmp))))
 
 (declare heap?)
 
 (defn node? [node]
   (and (instance? Node node)
-       (every? heap? (.-children ^Node node))))
+       (every? heap? (children node))))
 
 (defn heap? [x]
   (and (sequential? x)
@@ -65,14 +75,6 @@
 
 (s/def ::heap heap?)
 (s/def ::node node?)
-
-(defn- app [x y]
-  (with-meta (cons x y) (meta y)))
-
-(defn link [n1 n2]
-  (if (leq (cmp n1) (element n1) (element n2))
-    (Node. (inc (rank n1)) (element n1) (app n2 (.-children ^Node n1)) (cmp n1))
-    (Node. (inc (rank n1)) (element n2) (app n1 (.-children ^Node n2)) (cmp n1))))
 
 (s/fdef insert-tree
   :args (s/cat :node ::node :heap ::heap))
@@ -123,11 +125,12 @@
                           [node' (app node nodes')]))))
 
           [min-node remaining] (get-min heap)]
-      (merge-heap (with-meta (reverse (.-children ^Node min-node)) {::compare (cmp min-node)})
+      (merge-heap (with-meta (reverse (children min-node)) {::compare (cmp min-node)})
                   remaining))))
 
 (s/fdef make-heap
-  :args (s/cat :compare fn?))
+  :args (s/cat :compare fn?)
+  :ret ::heap)
 
 (defn make-heap [compare]
   ^{::compare compare} ())
@@ -243,7 +246,7 @@
   around if we want to have a way to count."
     [heap]
     (letfn [(count-node [node]
-              (+ 1 (count-heap (.-children ^Node node))))]
+              (+ 1 (count-heap (children node))))]
       (reduce + 0 (map count-node heap))))
 
   (time
