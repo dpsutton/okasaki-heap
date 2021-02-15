@@ -126,7 +126,7 @@
       (merge-heap (with-meta (reverse (.-children ^Node min-node)) {::compare (cmp min-node)})
                   remaining))))
 
-(s/fdef make-heanp
+(s/fdef make-heap
   :args (s/cat :compare fn?))
 
 (defn make-heap [compare]
@@ -238,7 +238,10 @@
                         ([result x] (insert x result)))
                       (integers))))))
 
-  (defn count-heap [heap]
+  (defn count-heap
+    "Terribly slow implementation. Will need to keep this information
+  around if we want to have a way to count."
+    [heap]
     (letfn [(count-node [node]
               (+ 1 (count-heap (.-children ^Node node))))]
       (reduce + 0 (map count-node heap))))
@@ -250,8 +253,8 @@
                  (fn
                    ([] (make-heap compare))
                    ([heap] (heap-sort heap))
-                   ([heap e] (cond (< (count-heap heap) threshold)
-                                   (insert e heap)
+                   ([heap e] (cond (< @c #_(count-heap heap) threshold)
+                                   (do (vswap! c inc) (insert e heap))
 
                                    (> e (find-min heap))
                                    (insert e (delete-min heap))
@@ -259,6 +262,5 @@
 
                                    :else
                                    heap))))
-               (shuffle (range 1e4))))
-
+               (shuffle (range 1e5))))
   )
