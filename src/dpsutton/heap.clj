@@ -42,25 +42,20 @@
   (rank [_])
   (element [_])
   (children [_])
-  (cmp [_])
-  (link [_ _]))
+  (link [cmp n1 n2]))
 
 (defn leq [cmp x y]
   (<= (cmp x y) 0))
 
-(defn- app [x y]
-  (with-meta (cons x y) (meta y)))
-
-(deftype Node [rnk e chdren cmp]
+(deftype Node [rnk e chdren]
   INode
   (rank [_] rnk)
   (element [_] e)
   (children [_] chdren)
-  (cmp [_] cmp)
-  (link [n1 n2]
+  (link [n1 n2 cmp]
     (if (leq cmp e (element n2))
-      (Node. (inc rnk) e            (app n2 chdren)        cmp)
-      (Node. (inc rnk) (element n2) (app n1 (children n2)) cmp))))
+      (Node. (inc rnk) e            (cons n2 chdren))
+      (Node. (inc rnk) (element n2) (cons n1 (children n2))))))
 
 (declare heap?)
 
@@ -69,127 +64,131 @@
        (every? heap? (children node))))
 
 (defn heap? [x]
-  (and (sequential? x)
-       (contains? (meta x) ::compare)
-       (every? node? x)))
+  (and (sequential? x) (every? node? x)))
 
 (s/def ::heap heap?)
 (s/def ::node node?)
 
-(s/fdef insert-tree
-  :args (s/cat :node ::node :heap ::heap))
+(s/fdef insert-tree*
+  :args (s/cat :cmp fn? :heap ::heap :node ::node))
 
-(defn- insert-tree [node heap]
+(defn- insert-tree* [cmp heap node]
   (if (empty? heap)
-    (with-meta (list node) {::compare (cmp node)})
+    (list node)
     (let [[t2 & rst] heap]
       (if (< (rank node) (rank t2))
-        (app node heap)
-        (recur (link node t2) rst)))))
+        (cons node heap)
+        (recur cmp rst (link node t2 cmp))))))
 
-(s/fdef merge-heap
-  :args (s/cat :tree1 ::heap :tree2 ::heap)
+(s/fdef merge-heap*
+  :args (s/cat :cmp fn? :tree1 ::heap :tree2 ::heap)
   :ret ::heap)
 
-(defn- merge-heap [[t1 & ts1 :as tree1] [t2 & ts2 :as tree2]]
+(defn- merge-heap* [cmp [t1 & ts1 :as tree1] [t2 & ts2 :as tree2]]
   (cond (empty? tree2)          tree1
         (empty? tree1)          tree2
-        (< (rank t1) (rank t2)) (app t1 (merge-heap ts1 tree2))
-        (> (rank t1) (rank t2)) (app t2 (merge-heap tree1 ts2))
-        :else                   (insert-tree (link t1 t2) (merge-heap ts1 ts2))))
+        (< (rank t1) (rank t2)) (cons t1 (merge-heap* cmp ts1 tree2))
+        (> (rank t1) (rank t2)) (cons t2 (merge-heap* cmp tree1 ts2))
+        :else                   (insert-tree* cmp
+                                              (merge-heap* cmp ts1 ts2)
+                                              (link t1 t2 cmp))))
 
-(s/fdef find-min
-  :args (s/cat :heap ::heap)
+(s/fdef find-min*
+  :args (s/cat :cmp fn? :heap ::heap)
   :ret ::heap)
 
-(defn find-min [[node & nodes :as heap]]
+(defn find-min* [cmp [node & nodes :as heap]]
   (cond (empty? heap)  nil
         (empty? nodes) (element node)
         :else          (let [element (element node)
-                             min' (find-min nodes)]
-                         (if (leq (cmp node) element min') element min'))))
+                             min' (find-min* cmp nodes)]
+                         (if (leq cmp element min') element min'))))
 
-(s/fdef delete-min
-  :args (s/cat :ts ::heap)
+(s/fdef delete-min*
+  :args (s/cat :cmp fn? :heap ::heap)
   :ret ::heap)
 
-(defn delete-min [heap]
+(defn delete-min* [cmp heap]
   (if (empty? heap)
     heap
     (let [get-min (fn get-min [[node & nodes]]
                     (if (empty? nodes)
                       [node nil]
                       (let [[node' nodes'] (get-min nodes)]
-                        (if (leq (cmp node) (element node) (element node'))
+                        (if (leq cmp (element node) (element node'))
                           [node nodes]
-                          [node' (app node nodes')]))))
+                          [node' (cons node nodes')]))))
 
           [min-node remaining] (get-min heap)]
-      (merge-heap (with-meta (reverse (children min-node)) {::compare (cmp min-node)})
-                  remaining))))
+      (merge-heap* cmp (reverse (children min-node)) remaining))))
 
 (s/fdef make-heap
   :args (s/cat :compare fn?)
   :ret ::heap)
 
-(defn make-heap [compare]
-  ^{::compare compare} ())
+(declare -lazy-vals)
+
+(defprotocol IHeap
+  (-find-min [heap])
+  (-delete-min [heap])
+  (-insert [heap x])
+  (-heap-sort [heap]))
 
 (s/fdef insert
-  :args (s/cat :x any? :tree ::heap)
+  :args (s/cat :cmp fn? :tree ::heap :x any?)
   :ret ::heap)
 
-(defn insert [x tree]
-  (let [cmp (get (meta tree) ::compare)]
-    (insert-tree (Node. 0 x (with-meta () {::compare cmp}) cmp) tree)))
+(deftype HeapWrapper [nodes cmp cnt]
+  clojure.lang.Counted
+  (count [_] cnt)
 
+  clojure.lang.Seqable
+  (seq [_]
+    (letfn [(ls [[n & rst]]
+              (when n
+                (lazy-cat [(element n)]
+                          (ls (children n))
+                          (ls rst))))]
+      (ls nodes)))
+
+  clojure.lang.IPersistentCollection
+  (cons [heap x] (-insert heap x))
+  (empty [_heap] (HeapWrapper. () cmp 0))
+  (equiv [heap o] (and (instance? HeapWrapper o)
+                       (= cnt (.-cnt ^HeapWrapper o))
+                       (= (-heap-sort heap) (-heap-sort o))))
+
+  IHeap
+  (-find-min [_]
+    (find-min* cmp nodes))
+  (-delete-min [_]
+    (HeapWrapper. (delete-min* cmp nodes) cmp (dec cnt)))
+  (-insert [_ x]
+    (HeapWrapper. (insert-tree* cmp nodes (Node. 0 x ()))
+                  cmp
+                  (inc cnt)))
+  (-heap-sort [_]
+    (loop [sorted []
+           nodes nodes]
+      (if-let [x (find-min* cmp nodes)]
+        (recur (conj sorted x) (delete-min* cmp nodes))
+        sorted))))
+
+(defn insert [heap x] (-insert heap x))
+(defn find-min [heap] (-find-min heap))
+(defn delete-min [heap] (-delete-min heap))
+(defn heap-sort [heap] (-heap-sort heap))
+
+(defn make-heap [compare-fn]
+  (HeapWrapper. () compare-fn 0))
 
 (comment
-  #{clojure.lang.Indexed
-    clojure.lang.Associative
-    clojure.lang.IKVReduce
-    clojure.lang.ILookup
-    clojure.lang.Sequential
-    java.lang.Runnable
-    clojure.lang.Seqable
-    clojure.lang.IObj
-    java.util.List
-    java.io.Serializable
-    clojure.lang.IFn
-    clojure.lang.IPersistentStack
-    java.lang.Comparable
-    clojure.lang.Reversible
-    clojure.lang.AFn
-    java.lang.Iterable
-    clojure.lang.IHashEq
-    clojure.lang.IEditableCollection
-    java.util.Collection
-    clojure.lang.IMeta
-    clojure.lang.IPersistentCollection
-    java.util.concurrent.Callable
-    java.lang.Object
-    java.util.RandomAccess
-    clojure.lang.APersistentVector
-    clojure.lang.IReduceInit
-    clojure.lang.IReduce
-    clojure.lang.Counted
-    clojure.lang.IPersistentVector}
-
   (require '[clojure.spec.test.alpha :as stest])
-  (stest/instrument `[insert insert-tree make-heap delete-min find-min])
-  (stest/unstrument `[insert insert-tree make-heap delete-min find-min])
-  (insert 3 ())
-  (insert 3 (make-heap compare))
-  (heap? (make-heap compare))
-  (clojure.repl/doc insert)
-  (clojure.repl/dir stest)
-
-  (heap? ())
-  (heap? ^{::compare compare} ())
+  (stest/instrument `[insert-tree* delete-min* find-min*])
+  (stest/unstrument `[insert-tree* delete-min* find-min*])
   (find-min
     (delete-min
-      (reduce (fn [tree x] (insert-tree (Node. 0 x (with-meta () {::compare compare}) compare)
-                                        tree))
+      (reduce insert
               (make-heap compare)
               (range 4))))
 
@@ -213,22 +212,16 @@
             result)))
       nil))
   (find-min
-    (reduce (fn [heap x] (insert x heap))
+    (reduce insert
             (make-heap compare)
             (take 5000 (integers))))
 
-  (defn heap-sort [heap]
-    (loop [result []
-           heap heap]
-      (if-let [x (find-min heap)]
-        (recur (conj result x) (delete-min heap))
-        result)))
   (time
     (find-min (transduce (map identity)
                          (fn queueueue
                            ([] (make-heap compare))
                            ([result] result)
-                           ([result x] (insert x result)))
+                           ([result x] (insert result x)))
                          (integers))))
   (let [sorted (sort (integers))]
     (time
@@ -238,32 +231,26 @@
                       (fn queueueue
                         ([] (make-heap compare))
                         ([result] result)
-                        ([result x] (insert x result)))
+                        ([result x] (insert result x)))
                       (integers))))))
 
-  (defn count-heap
-    "Terribly slow implementation. Will need to keep this information
-  around if we want to have a way to count."
-    [heap]
-    (letfn [(count-node [node]
-              (+ 1 (count-heap (children node))))]
-      (reduce + 0 (map count-node heap))))
+  (let [input (shuffle (range 1e5))]
+    (time
+      (transduce (map identity)
+                 (let [threshold 10]
+                   (fn
+                     ([] (make-heap compare))
+                     ([heap] (heap-sort heap))
+                     ([heap e] (cond (< (count heap) threshold)
+                                     (insert heap e)
 
-  (time
-    (transduce (map identity)
-               (let [threshold 10
-                     c         (volatile! 0)]
-                 (fn
-                   ([] (make-heap compare))
-                   ([heap] (heap-sort heap))
-                   ([heap e] (cond (< @c #_(count-heap heap) threshold)
-                                   (do (vswap! c inc) (insert e heap))
+                                     (> e (find-min heap))
+                                     (insert (delete-min heap) e)
 
-                                   (> e (find-min heap))
-                                   (insert e (delete-min heap))
-                                   #_(->> heap delete-min (insert e))
+                                     :else
+                                     heap))))
+                 input)))
 
-                                   :else
-                                   heap))))
-               (shuffle (range 1e5))))
+  (let [input (shuffle (range 1e5))]
+    (time (take 10 (sort input))))
   )
