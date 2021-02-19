@@ -186,11 +186,6 @@
   (require '[clojure.spec.test.alpha :as stest])
   (stest/instrument `[insert-tree* delete-min* find-min*])
   (stest/unstrument `[insert-tree* delete-min* find-min*])
-  (find-min
-    (delete-min
-      (reduce insert
-              (make-heap compare)
-              (range 4))))
 
   (import java.util.PriorityQueue)
   (def integers #(shuffle (range 1000)))
@@ -211,18 +206,7 @@
             (recur (conj result x) q)
             result)))
       nil))
-  (find-min
-    (reduce insert
-            (make-heap compare)
-            (take 5000 (integers))))
 
-  (time
-    (find-min (transduce (map identity)
-                         (fn queueueue
-                           ([] (make-heap compare))
-                           ([result] result)
-                           ([result x] (insert result x)))
-                         (integers))))
   (let [sorted (sort (integers))]
     (time
       (= sorted
