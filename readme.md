@@ -35,3 +35,7 @@ Shortest path through a graph. Two paths [:a :c :d] and [:a :b :c :d]. A bit of 
                (into seen nbs))))))
 [:start :a :c :d]
 ```
+
+The heap is `clojure.lang.Seqable` so supports `seq`. This returns a seq of the items in the heap but they are not sorted as seq needs to be cheap. Heaps are also `clojure.lang.IPersistentCollection` so support `cons` (and therefore `conj`), `empty`, and `equiv`. Two heaps are equivalent if they have the same cardinality and same sort order. There's no good way to enforce that the comparison functions are the same, so can only look at the result of the comparison. Heaps are also `clojure.lang.Counted` so `count` is supported and O(1).
+
+The heap interface that you should use is `insert` (equivalent to `conj`), `find-min`, `delete-min`, and `heap-sort` for the sorted results.
